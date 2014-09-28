@@ -5,7 +5,7 @@ The lexer with very few options that supports Python style indentation.
 
 Example usage:
 
-python```
+```python
 from alexer import Lexer
 
 lexer = Lexer(
