@@ -1,6 +1,8 @@
 """
 Dead simple lexer without a lot of flexibility.
 """
+from collections import namedtuple
+from re import compile as rec, escape as esc
 
 class Token(object):
     def __init__(self, type_, full_text, location, value = None):
@@ -8,35 +10,26 @@ class Token(object):
         self.full_text = full_text
         self.location = location
         self.value = value
-    
+
     def __repr__(self):
         return '(%s,%s)' % (self.type, self.value)
 
 class Lexer(object):
     def __init__(self, symbols, keywords):
-        from re import compile as rec, escape as esc
-        
         self.regex_token_pairs = tuple(
             (type_, rec(regex)) for type_, regex in
-                tuple(
-                    ('KEYWORD', keyword + r'(?!\w)')
-                    for keyword in keywords
-                ) + (
-                    ('STRING',
-                        r'\"(?:\\\"|[^"])*\"' + r'|'
-                        r"\'(?:\\\'|[^'])*\'"),
-                    ('FLOAT',   r'\-?\d+\.\d*'),
-                    ('INT',     r'\-?\d+'),
-                    ('NAME',    r'\w+')
-                ) + tuple(
-                    ('SYMBOL', esc(symbol))
-                    for symbol in symbols
-                )
-            )
+                tuple(('KEYWORD', k + r'(?!\w)') for k in keywords) +
+                tuple(('SYMBOL', esc(symbol)) for symbol in symbols) +
+                (     ('STRING',
+                          r'\"(?:\\\"|[^"])*\"' + r'|'
+                          r"\'(?:\\\'|[^'])*\'"),
+                      ('FLOAT',   r'\d+\.\d*|\.\d+'),
+                      ('INT',     r'\d+'),
+                      ('NAME',    r'\w+')))
         self.space_re = rec(r'[ \t]*(?:\#[^\n]*)?')
         self.empty_lines_re = rec(r'(?:(?:[ \t]*(?:\#[^\n]*)?)(?:\n|\Z))*')
         self.err_re = rec(r'[^\s]*')
-        
+
     def lex(self, string):
         s = string
         p = self.regex_token_pairs
@@ -76,3 +69,33 @@ class Lexer(object):
             d.pop()
             yield Token('DEDENT', s, len(s))
         yield Token('END', s, len(s))
+
+PlyToken = namedtuple('PlyToken', 'type value lineno lexpos')
+
+class PlyLexer(object):
+    tokens = ('END', 'NEWLINE', 'INDENT', 'DEDENT',
+              'STRING', 'FLOAT', 'INT', 'NAME')
+
+    def __init__(self, symbols_table, keywords):
+        self.tokens = (self.tokens +
+                       tuple(symbols_table.values()) + 
+                       tuple(k.upper() for k in keywords))
+        self._symbols_table = symbols_table
+        self._lexer = Lexer(symbols_table.keys(), keywords)
+        self._string = self._generator = self._lineno = None
+
+    def input(self, string):
+        self._string = string
+        self._generator = self._lexer.lex(string)
+        self._lineno = 1
+
+    def token(self):
+        try:
+            t = next(self._generator)
+            if   t.type == 'NEWLINE': self._lineno += 1
+            elif t.type == 'STRING' : self._lineno += t.value.count('\n')
+            type = (self._symbols_table[t.value] if t.type == 'SYMBOL'  else
+                    t.value.upper()              if t.type == 'KEYWORD' else
+                    t.type)
+            return PlyToken(type, t.value, self._lineno, t.location)
+        except StopIteration: return None
